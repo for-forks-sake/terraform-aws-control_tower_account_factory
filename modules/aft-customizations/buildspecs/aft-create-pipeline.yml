@@ -52,9 +52,22 @@ phases:
       - unzip -q -o terraform_${TF_VERSION}_linux_amd64.zip && mv terraform /usr/bin
       - terraform --version
 
+
+      # safe chain changes weren't fully tested given we would need to create a new AWS account
+      # Install Aikido safe-chain
+      - export SAFE_CHAIN_PATH="${SAFE_CHAIN_PATH:-/usr/local/.safe-chain}"
+      - set -o pipefail && curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci --install-dir "$SAFE_CHAIN_PATH"
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+
       # Install Python Dependencies
       - python3 -m venv ./venv
       - source ./venv/bin/activate
+
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+      - pip safe-chain-verify
+
       - pip install -U pip
       - pip install jinja2-cli==0.7.0 Jinja2==3.0.1
 
