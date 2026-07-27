@@ -555,3 +555,7 @@ variable "aft_metrics_reporting" {
     error_message = "Valid values for var: aft_metrics_reporting are (true, false)."
   }
 }
+
+variable "tf_plan_timer_seconds" {
+  default = "2m"
+}

@@ -1,0 +1,5 @@
+## v1.21.1-internal-0.1.0
+
+### Added
+
+- PET-1282: Added terraform plan and a default timer in global and account customizations pipelines.

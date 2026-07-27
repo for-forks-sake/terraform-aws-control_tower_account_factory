@@ -19,6 +19,8 @@ phases:
       - AFT_ADMIN_ROLE_NAME=$(aws ssm get-parameter --name /aft/resources/iam/aft-administrator-role-name | jq --raw-output ".Parameter.Value")
       - AFT_ADMIN_ROLE_ARN=arn:$AWS_PARTITION:iam::$AFT_MGMT_ACCOUNT:role/$AFT_ADMIN_ROLE_NAME
       - ROLE_SESSION_NAME=$(aws ssm get-parameter --name /aft/resources/iam/aft-session-name | jq --raw-output ".Parameter.Value")
+      - TF_PLAN_TIMER=$(aws ssm get-parameter --name "/aft/config/aft-pipeline/tf-plan-timer" --query "Parameter.Value" --output text)
+
 
       # Configure Development SSH Key
       - |
@@ -107,7 +109,20 @@ phases:
           cd $DEFAULT_PATH/terraform
           export AWS_PROFILE=aft-management-admin
           /opt/aft/bin/terraform init -no-color
-          /opt/aft/bin/terraform apply -no-color --auto-approve
+          /opt/aft/bin/terraform plan -out=tfplan
+
+          infrastructure_not_changed=$(/opt/aft/bin/terraform show -no-color tfplan | grep -c "No changes. Your infrastructure matches the configuration.")
+          if [[ $infrastructure_not_changed -ne 1 ]]; then
+            echo "#########################################"
+            echo "Waiting from $TF_PLAN_TIMER to allow the review of TF plan. This is a workaround until AWS delivers a proper approval process."
+            echo "#########################################"
+            sleep $TF_PLAN_TIMER
+          else
+            echo "#########################################"
+            echo "No infrastructure changes, skipping approval timer..."
+            echo "#########################################"
+          fi
+          /opt/aft/bin/terraform apply tfplan
         else
           TF_ORG_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/org-name" --query "Parameter.Value" --output text)
           TF_TOKEN=$(aws ssm get-parameter --name "/aft/config/terraform/token" --with-decryption --query "Parameter.Value" --output text)

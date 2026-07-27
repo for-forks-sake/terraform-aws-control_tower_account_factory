@@ -284,3 +284,8 @@ variable "aft_codepipeline_customizations_bucket_id" {
 variable "aft_customizations_audit_table_name" {
   type = string
 }
+
+variable "tf_plan_timer_seconds" {
+  type = string
+  default = "2m"
+}
