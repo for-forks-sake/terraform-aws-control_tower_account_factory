@@ -251,3 +251,8 @@ variable "aft_version" {
 variable "aft_metrics_reporting" {
   type = string
 }
+
+variable "tf_plan_timer_seconds" {
+  type = string
+  default = "2m"
+}
