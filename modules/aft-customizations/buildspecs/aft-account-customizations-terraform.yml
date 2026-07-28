@@ -99,6 +99,7 @@ phases:
             TF_DDB_TABLE=$(aws ssm get-parameter --name "/aft/config/oss-backend/table-id" --query "Parameter.Value" --output text)
             TF_S3_BUCKET=$(aws ssm get-parameter --name "/aft/config/oss-backend/bucket-id" --query "Parameter.Value" --output text)
             TF_S3_KEY=$VENDED_ACCOUNT_ID-aft-account-customizations/terraform.tfstate
+            TF_PLAN_TIMER=$(aws ssm get-parameter --name "/aft/config/aft-pipeline/tf-plan-timer" --query "Parameter.Value" --output text)
 
             cd /tmp
             echo "Installing Terraform"
@@ -115,7 +116,30 @@ phases:
             cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
             export AWS_PROFILE=aft-management-admin
             /opt/aft/bin/terraform init -no-color
-            /opt/aft/bin/terraform apply -no-color --auto-approve
+            /opt/aft/bin/terraform providers
+            
+            #export TF_LOG="TRACE"
+            /opt/aft/bin/terraform plan -out=tfplan -no-color -detailed-exitcode
+            plan_exit_code=$?
+            
+            if [[ $plan_exit_code -eq 1 ]]; then
+              echo "#########################################"
+              echo "ERROR: Terraform plan failed with critical error. Exiting."
+              echo "#########################################"
+              exit 1
+            elif [[ $plan_exit_code -eq 2 ]]; then
+              echo "#########################################"
+              echo "Waiting from $TF_PLAN_TIMER to allow the review of TF plan (Changes detected)."
+              echo "#########################################"
+              sleep $TF_PLAN_TIMER
+            else
+              # Exit code 0 means no changes.
+              echo "#########################################"
+              echo "No infrastructure changes, skipping approval timer..."
+              echo "#########################################"
+            fi
+            
+            /opt/aft/bin/terraform apply tfplan -no-color
           else
             TF_BACKEND_REGION=$(aws ssm get-parameter --name "/aft/config/oss-backend/primary-region" --query "Parameter.Value" --output text)
             TF_ORG_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/org-name" --query "Parameter.Value" --output text)

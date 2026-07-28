@@ -384,3 +384,9 @@ resource "aws_ssm_parameter" "aft_metrics_reporting_uuid" {
   value = random_uuid.metrics_reporting_uuid.result
   type  = "String"
 }
+
+resource "aws_ssm_parameter" "xapo_customization_aft_pipeline_tf_plan_timer_value" {
+  name  = "/aft/config/aft-pipeline/tf-plan-timer"
+  value = var.tf_plan_timer_seconds
+  type  = "String"
+}
