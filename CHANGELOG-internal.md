@@ -4,3 +4,9 @@
 
 - PET-1282: Added terraform plan and a default timer in global and account customizations pipelines.
 - PET-4971|PET-4923: Install Aikido safe-chain.
+
+## 1.13.5-internal-0.1.0
+
+### Added
+
+- PET-1282: Added terraform plan and a default timer in global and account customizations pipelines.
