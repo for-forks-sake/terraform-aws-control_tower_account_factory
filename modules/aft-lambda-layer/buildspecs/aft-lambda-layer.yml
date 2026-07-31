@@ -31,9 +31,19 @@ phases:
       - git config --global credential.UseHttpPath true
       - echo "Building aft_common from ${URL}:${AWS_MODULE_GIT_REF}"
       - git clone -b $AWS_MODULE_GIT_REF $AWS_MODULE_SOURCE aws-aft-core-framework
+
+      # Install Aikido safe-chain
+      - export SAFE_CHAIN_PATH="${SAFE_CHAIN_PATH:-/usr/local/.safe-chain}"
+      - set -o pipefail && curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci --install-dir "$SAFE_CHAIN_PATH"
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+
       - python3 -m pip install virtualenv
       - python3 -m venv .venv
       - . .venv/bin/activate
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+      - pip safe-chain-verify
       - python3 -m pip install -U pip
       - python3 -m pip install --upgrade setuptools
       - python3 -m pip install ./aws-aft-core-framework/sources/aft-lambda-layer

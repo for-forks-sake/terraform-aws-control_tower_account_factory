@@ -47,14 +47,29 @@ phases:
       - chmod +x $DEFAULT_PATH/aws-aft-core-framework/sources/scripts/creds.sh
       - $DEFAULT_PATH/aws-aft-core-framework/sources/scripts/creds.sh
 
+      # Install Aikido safe-chain
+      - export SAFE_CHAIN_PATH="${SAFE_CHAIN_PATH:-/usr/local/.safe-chain}"
+      - set -o pipefail && curl -fsSL https://github.com/AikidoSec/safe-chain/releases/latest/download/install-safe-chain.sh | sh -s -- --ci --install-dir "$SAFE_CHAIN_PATH"
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+      - pip safe-chain-verify
+
       # Install AFT Python Dependencies
       - python3 -m venv $DEFAULT_PATH/aft-venv
-      - $DEFAULT_PATH/aft-venv/bin/pip install -U pip
-      - $DEFAULT_PATH/aft-venv/bin/pip install jinja2-cli==0.7.0 Jinja2==3.0.1 MarkupSafe==2.0.1 boto3==1.18.56 requests==2.26.0
+      - source $DEFAULT_PATH/aft-venv/bin/activate
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+      - pip safe-chain-verify
+      - pip install -U pip
+      - pip install jinja2-cli==0.7.0 Jinja2==3.0.1 MarkupSafe==2.0.1 boto3==1.18.56 requests==2.26.0
 
       # Install API Helper Python Dependencies
       - python3 -m venv $DEFAULT_PATH/api-helpers-venv
-      - $DEFAULT_PATH/api-helpers-venv/bin/pip install -r $DEFAULT_PATH/api_helpers/python/requirements.txt
+      - source $DEFAULT_PATH/api-helpers-venv/bin/activate
+      - export SAFE_CHAIN_LOGGING=verbose
+      - export PATH="$SAFE_CHAIN_PATH/bin:$SAFE_CHAIN_PATH/shims:$PATH"
+      - pip safe-chain-verify
+      - pip install -r $DEFAULT_PATH/api_helpers/python/requirements.txt
 
       # Mark helper scripts as executable
       - chmod +x $DEFAULT_PATH/api_helpers/pre-api-helpers.sh
