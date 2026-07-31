@@ -50,6 +50,13 @@
         "codeconnections:UseConnection"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sns:Publish"
+      ],
+      "Resource": "${aft_customizations_approval_sns_topic_arn}"
     }
   ]
 }

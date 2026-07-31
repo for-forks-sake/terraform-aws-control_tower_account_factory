@@ -24,3 +24,7 @@ output "aft_codepipeline_customizations_bucket_arn" {
 output "state_machine_arn" {
   value = aws_sfn_state_machine.aft_invoke_customizations_sfn.arn
 }
+
+output "aft_customizations_approval_sns_topic_arn" {
+  value = aws_sns_topic.aft_customizations_approval.arn
+}

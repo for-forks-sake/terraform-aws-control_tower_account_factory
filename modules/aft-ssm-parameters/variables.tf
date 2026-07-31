@@ -284,3 +284,11 @@ variable "aft_codepipeline_customizations_bucket_id" {
 variable "aft_customizations_audit_table_name" {
   type = string
 }
+
+variable "aft_customizations_approval_sns_topic_arn" {
+  type = string
+}
+
+variable "aft_customizations_approval_timeout_in_minutes" {
+  type = number
+}

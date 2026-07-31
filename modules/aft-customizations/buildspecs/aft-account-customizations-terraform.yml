@@ -3,11 +3,22 @@
 #
 version: 0.2
 
+env:
+  exported-variables:
+    - TF_PLAN_CHANGES
+    - TF_PLAN_LOGS_URL
+    - VENDED_ACCOUNT_NAME
+
 phases:
   install:
     on-failure: ABORT
     commands:
       - set -e
+      # Approval-stage mode selection and safe defaults for exported variables
+      - TF_COMMAND="${TF_COMMAND:-legacy}"
+      # Safe default: require approval
+      - TF_PLAN_CHANGES=true
+      - VENDED_ACCOUNT_NAME="unknown"
       # Populate Required Variables
       - DEFAULT_PATH=$(pwd)
       - TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
@@ -15,22 +26,48 @@ phases:
       - TF_DISTRIBUTION=$(aws ssm get-parameter --name "/aft/config/terraform/distribution" --query "Parameter.Value" --output text)
       - CT_MGMT_REGION=$(aws ssm get-parameter --name "/aft/config/ct-management-region" --query "Parameter.Value" --output text)
       - AFT_MGMT_ACCOUNT=$(aws ssm get-parameter --name "/aft/account/aft-management/account-id" --query "Parameter.Value" --output text)
+      - TF_PLAN_LOGS_URL="https://${AWS_REGION}.console.aws.amazon.com/codesuite/codebuild/${AFT_MGMT_ACCOUNT}/projects/${CODEBUILD_BUILD_ID%%:*}/build/${CODEBUILD_BUILD_ID/:/%3A}/log?region=${AWS_REGION}"
       - AFT_EXEC_ROLE_ARN=arn:$AWS_PARTITION:iam::$AFT_MGMT_ACCOUNT:role/AWSAFTExecution
       - VENDED_EXEC_ROLE_ARN=arn:$AWS_PARTITION:iam::$VENDED_ACCOUNT_ID:role/AWSAFTExecution
       - AFT_ADMIN_ROLE_NAME=$(aws ssm get-parameter --name /aft/resources/iam/aft-administrator-role-name | jq --raw-output ".Parameter.Value")
       - AFT_ADMIN_ROLE_ARN=arn:$AWS_PARTITION:iam::$AFT_MGMT_ACCOUNT:role/$AFT_ADMIN_ROLE_NAME
       - ROLE_SESSION_NAME=$(aws ssm get-parameter --name /aft/resources/iam/aft-session-name | jq --raw-output ".Parameter.Value")
-      - |
-        CUSTOMIZATION=$(aws dynamodb get-item --table-name aft-request-metadata --key "{\"id\": {\"S\": \"$VENDED_ACCOUNT_ID\"}}" --attributes-to-get "account_customizations_name" | jq --raw-output ".Item.account_customizations_name.S")
 
-      # Check if customization directory exists       
+      # Resolve the vended account name for the approval dialog (plan mode only)
       - |
-        if [[ ! -z "$CUSTOMIZATION" ]]; then  
+        if [[ $TF_COMMAND == "plan" ]]; then
+          ACCOUNT_NAME=$(aws dynamodb get-item --table-name aft-request-metadata --key "{\"id\": {\"S\": \"$VENDED_ACCOUNT_ID\"}}" --attributes-to-get "account_name" | jq --raw-output '.Item.account_name.S // empty' || true)
+          [[ ! -z "$ACCOUNT_NAME" ]] && VENDED_ACCOUNT_NAME="$ACCOUNT_NAME"
+        fi
+
+      # Resolve the assigned customization. Apply mode reads it from the plan
+      # manifest so apply acts on exactly what was planned; other modes read
+      # DynamoDB (legacy keeps the upstream command verbatim)
+      - |
+        case "$TF_COMMAND" in
+          plan)
+            CUSTOMIZATION=$(aws dynamodb get-item --table-name aft-request-metadata --key "{\"id\": {\"S\": \"$VENDED_ACCOUNT_ID\"}}" --attributes-to-get "account_customizations_name" | jq --raw-output '.Item.account_customizations_name.S // empty')
+            if [[ -z "$CUSTOMIZATION" ]]; then
+              TF_PLAN_CHANGES=false
+              echo "No account customization assigned - Approval and Apply will be skipped."
+            fi
+            ;;
+          apply)
+            CUSTOMIZATION=$(jq -r '.customization // empty' "$DEFAULT_PATH/aft-plan-manifest.json")
+            ;;
+          *)
+            CUSTOMIZATION=$(aws dynamodb get-item --table-name aft-request-metadata --key "{\"id\": {\"S\": \"$VENDED_ACCOUNT_ID\"}}" --attributes-to-get "account_customizations_name" | jq --raw-output ".Item.account_customizations_name.S")
+            ;;
+        esac
+
+      # Check if customization directory exists
+      - |
+        if [[ ! -z "$CUSTOMIZATION" ]]; then
           if [[ ! -d "$DEFAULT_PATH/$CUSTOMIZATION" ]]; then
             echo "Error: ${CUSTOMIZATION} directory does not exist"
             exit 1
           fi
-          
+
           echo "Found customization" $CUSTOMIZATION
 
           # Configure Development SSH Key
@@ -47,7 +84,7 @@ phases:
             chmod 600 ~/.ssh/ssh_key
             eval "$(ssh-agent -s)"
             ssh-add ~/.ssh/ssh_key
-          fi   
+          fi
 
           # Clone AFT
           AWS_MODULE_SOURCE=$(aws ssm get-parameter --name "/aft/config/aft-pipeline-code-source/repo-url" --query "Parameter.Value" --output text)
@@ -93,11 +130,13 @@ phases:
     on-failure: ABORT
     commands:
       - |
-        if [[ ! -z "$CUSTOMIZATION" ]]; then 
-          source $DEFAULT_PATH/api-helpers-venv/bin/activate
-          export AWS_PROFILE=aft-target
-          . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/pre-api-helpers.sh || exit 1
-          unset AWS_PROFILE
+        if [[ $TF_COMMAND != "apply" ]]; then
+          if [[ ! -z "$CUSTOMIZATION" ]]; then
+            source $DEFAULT_PATH/api-helpers-venv/bin/activate
+            export AWS_PROFILE=aft-target
+            . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/pre-api-helpers.sh || exit 1
+            unset AWS_PROFILE
+          fi
         fi
 
   build:
@@ -105,7 +144,7 @@ phases:
     commands:
       # Apply Customizations
       - |
-        if [[ ! -z "$CUSTOMIZATION" ]]; then 
+        if [[ ! -z "$CUSTOMIZATION" ]]; then
           source $DEFAULT_PATH/aft-venv/bin/activate
           if [ $TF_DISTRIBUTION = "oss" ]; then
             TF_BACKEND_REGION=$(aws ssm get-parameter --name "/aft/config/oss-backend/primary-region" --query "Parameter.Value" --output text)
@@ -118,86 +157,135 @@ phases:
             echo "Installing Terraform"
             curl -q -o terraform_${TF_VERSION}_linux_amd64.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
             mkdir -p /opt/aft/bin
-            unzip -q -o terraform_${TF_VERSION}_linux_amd64.zip 
+            unzip -q -o terraform_${TF_VERSION}_linux_amd64.zip
             mv terraform /opt/aft/bin
             /opt/aft/bin/terraform -no-color --version
 
-            cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
-            if ls *.jinja >/dev/null 2>&1; then
-              for f in *.jinja; do
-                jinja2 "$f" -D timestamp="$TIMESTAMP" -D tf_distribution_type="$TF_DISTRIBUTION" \
-                  -D provider_region="$CT_MGMT_REGION" -D region="$TF_BACKEND_REGION" \
-                  -D aft_admin_role_arn="$AFT_EXEC_ROLE_ARN" -D target_admin_role_arn="$VENDED_EXEC_ROLE_ARN" \
-                  -D bucket="$TF_S3_BUCKET" -D key="$TF_S3_KEY" -D dynamodb_table="$TF_DDB_TABLE" \
-                  -D kms_key_id="$TF_KMS_KEY_ID" -D tf_version="$TF_VERSION" >> "./$(basename "$f" .jinja).tf"
-              done
-            else
-              echo "No Jinja2 templates found - skipping template processing"
+            if [[ $TF_COMMAND != "apply" ]]; then
+              cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
+              if ls *.jinja >/dev/null 2>&1; then
+                for f in *.jinja; do
+                  jinja2 "$f" -D timestamp="$TIMESTAMP" -D tf_distribution_type="$TF_DISTRIBUTION" \
+                    -D provider_region="$CT_MGMT_REGION" -D region="$TF_BACKEND_REGION" \
+                    -D aft_admin_role_arn="$AFT_EXEC_ROLE_ARN" -D target_admin_role_arn="$VENDED_EXEC_ROLE_ARN" \
+                    -D bucket="$TF_S3_BUCKET" -D key="$TF_S3_KEY" -D dynamodb_table="$TF_DDB_TABLE" \
+                    -D kms_key_id="$TF_KMS_KEY_ID" -D tf_version="$TF_VERSION" >> "./$(basename "$f" .jinja).tf"
+                done
+              else
+                echo "No Jinja2 templates found - skipping template processing"
+              fi
+              for f in *.tf; do echo "\n \n"; echo $f; cat $f; done
             fi
-            for f in *.tf; do echo "\n \n"; echo $f; cat $f; done
-            
-            cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
-            export AWS_PROFILE=aft-management-admin
-            /opt/aft/bin/terraform init -no-color
-            /opt/aft/bin/terraform apply -no-color --auto-approve
-          else
-            TF_BACKEND_REGION=$(aws ssm get-parameter --name "/aft/config/oss-backend/primary-region" --query "Parameter.Value" --output text)
-            TF_ORG_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/org-name" --query "Parameter.Value" --output text)
-            TF_TOKEN=$(aws ssm get-parameter --name "/aft/config/terraform/token" --with-decryption --query "Parameter.Value" --output text)
-            TF_ENDPOINT=$(aws ssm get-parameter --name "/aft/config/terraform/api-endpoint" --query "Parameter.Value" --output text)
-            TF_PROJECT_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/project-name" --query "Parameter.Value" --output text)
-            TF_WORKSPACE_NAME=$VENDED_ACCOUNT_ID-aft-account-customizations
-            TF_CONFIG_PATH="./temp_configuration_file.tar.gz"
-            TF_HCP_OIDC_ENABLED=$(aws ssm get-parameter --name /aft/config/terraform/oidc-integration | jq --raw-output ".Parameter.Value")
-            TF_HCP_OIDC_AUDIENCE=$(aws ssm get-parameter --name /aft/config/terraform/oidc-aws-audience | jq --raw-output ".Parameter.Value")
 
             cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
-            if ls *.jinja >/dev/null 2>&1; then
-              for f in *.jinja; do
-                jinja2 "$f" -D timestamp="$TIMESTAMP" -D provider_region="$CT_MGMT_REGION" \
-                  -D tf_distribution_type="$TF_DISTRIBUTION" -D aft_admin_role_arn="$AFT_EXEC_ROLE_ARN" \
-                  -D target_admin_role_arn="$VENDED_EXEC_ROLE_ARN" -D terraform_org_name="$TF_ORG_NAME" \
-                  -D terraform_workspace_name="$TF_WORKSPACE_NAME"  >> "./$(basename "$f" .jinja).tf"
-              done
+            export AWS_PROFILE=aft-management-admin
+            case "$TF_COMMAND" in
+              plan)
+                /opt/aft/bin/terraform init -no-color
+                plan_exit_code=0
+                /opt/aft/bin/terraform plan -out=tfplan -no-color -detailed-exitcode || plan_exit_code=$?
+                if [[ $plan_exit_code -eq 1 ]]; then
+                  echo "ERROR: Terraform plan failed"; exit 1
+                elif [[ $plan_exit_code -eq 0 ]]; then
+                  TF_PLAN_CHANGES=false
+                  echo "No changes detected - Approval and Apply will be skipped."
+                fi
+                ;;
+              apply)
+                /opt/aft/bin/terraform init -no-color
+                /opt/aft/bin/terraform apply tfplan -no-color
+                ;;
+              *)
+                /opt/aft/bin/terraform init -no-color
+                /opt/aft/bin/terraform apply -no-color --auto-approve
+                ;;
+            esac
+          else
+            if [[ $TF_COMMAND == "plan" ]]; then
+              echo "TFC/TFE distribution - deployment is deferred to the Apply stage."
             else
-              echo "No Jinja2 templates found - skipping template processing"
+              TF_BACKEND_REGION=$(aws ssm get-parameter --name "/aft/config/oss-backend/primary-region" --query "Parameter.Value" --output text)
+              TF_ORG_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/org-name" --query "Parameter.Value" --output text)
+              TF_TOKEN=$(aws ssm get-parameter --name "/aft/config/terraform/token" --with-decryption --query "Parameter.Value" --output text)
+              TF_ENDPOINT=$(aws ssm get-parameter --name "/aft/config/terraform/api-endpoint" --query "Parameter.Value" --output text)
+              TF_PROJECT_NAME=$(aws ssm get-parameter --name "/aft/config/terraform/project-name" --query "Parameter.Value" --output text)
+              TF_WORKSPACE_NAME=$VENDED_ACCOUNT_ID-aft-account-customizations
+              TF_CONFIG_PATH="./temp_configuration_file.tar.gz"
+              TF_HCP_OIDC_ENABLED=$(aws ssm get-parameter --name /aft/config/terraform/oidc-integration | jq --raw-output ".Parameter.Value")
+              TF_HCP_OIDC_AUDIENCE=$(aws ssm get-parameter --name /aft/config/terraform/oidc-aws-audience | jq --raw-output ".Parameter.Value")
+
+              cd $DEFAULT_PATH/$CUSTOMIZATION/terraform
+              if ls *.jinja >/dev/null 2>&1; then
+                for f in *.jinja; do
+                  jinja2 "$f" -D timestamp="$TIMESTAMP" -D provider_region="$CT_MGMT_REGION" \
+                    -D tf_distribution_type="$TF_DISTRIBUTION" -D aft_admin_role_arn="$AFT_EXEC_ROLE_ARN" \
+                    -D target_admin_role_arn="$VENDED_EXEC_ROLE_ARN" -D terraform_org_name="$TF_ORG_NAME" \
+                    -D terraform_workspace_name="$TF_WORKSPACE_NAME"  >> "./$(basename "$f" .jinja).tf"
+                done
+              else
+                echo "No Jinja2 templates found - skipping template processing"
+              fi
+              for f in *.tf; do echo "\n \n"; echo $f; cat $f; done
+
+              cd $DEFAULT_PATH/$CUSTOMIZATION
+              tar -czf temp_configuration_file.tar.gz -C terraform --exclude .git --exclude venv .
+              python3 $DEFAULT_PATH/aws-aft-core-framework/sources/scripts/workspace_manager.py \
+                --operation "deploy" \
+                --organization_name $TF_ORG_NAME \
+                --workspace_name $TF_WORKSPACE_NAME \
+                --assume_role_arn $AFT_ADMIN_ROLE_ARN \
+                --assume_role_session_name $ROLE_SESSION_NAME \
+                --api_endpoint $TF_ENDPOINT \
+                --api_token $TF_TOKEN \
+                --terraform_version $TF_VERSION \
+                --config_file $TF_CONFIG_PATH \
+                --project_name "$TF_PROJECT_NAME" \
+                --hcp_oidc_enabled "$TF_HCP_OIDC_ENABLED" \
+                --hcp_oidc_audience "$TF_HCP_OIDC_AUDIENCE"
             fi
-            for f in *.tf; do echo "\n \n"; echo $f; cat $f; done
-            
-            cd $DEFAULT_PATH/$CUSTOMIZATION
-            tar -czf temp_configuration_file.tar.gz -C terraform --exclude .git --exclude venv .
-            python3 $DEFAULT_PATH/aws-aft-core-framework/sources/scripts/workspace_manager.py \
-              --operation "deploy" \
-              --organization_name $TF_ORG_NAME \
-              --workspace_name $TF_WORKSPACE_NAME \
-              --assume_role_arn $AFT_ADMIN_ROLE_ARN \
-              --assume_role_session_name $ROLE_SESSION_NAME \
-              --api_endpoint $TF_ENDPOINT \
-              --api_token $TF_TOKEN \
-              --terraform_version $TF_VERSION \
-              --config_file $TF_CONFIG_PATH \
-              --project_name "$TF_PROJECT_NAME" \
-              --hcp_oidc_enabled "$TF_HCP_OIDC_ENABLED" \
-              --hcp_oidc_audience "$TF_HCP_OIDC_AUDIENCE"
           fi
         fi
   post_build:
     on-failure: ABORT
     commands:
+      # Metrics are reported on every terminal build: non-plan modes, failed
+      # builds, and no-change plan builds (where Approval/Apply are skipped)
       - |
-        if [[ ! -z "$CUSTOMIZATION" ]]; then
-          export PYTHONPATH="$DEFAULT_PATH/aws-aft-core-framework/sources/aft-lambda-layer:$PYTHONPATH"
-          export AWS_PROFILE=aft-management
-          python3 $DEFAULT_PATH/aws-aft-core-framework/sources/aft-lambda-layer/aft_common/metrics.py --codebuild-name "aft-account-customizations" --codebuild-status $CODEBUILD_BUILD_SUCCEEDING
-          unset AWS_PROFILE
+        if [[ $TF_COMMAND != "plan" || $CODEBUILD_BUILD_SUCCEEDING == 0 || $TF_PLAN_CHANGES == "false" ]]; then
+          if [[ ! -z "$CUSTOMIZATION" ]]; then
+            export PYTHONPATH="$DEFAULT_PATH/aws-aft-core-framework/sources/aft-lambda-layer:$PYTHONPATH"
+            export AWS_PROFILE=aft-management
+            python3 $DEFAULT_PATH/aws-aft-core-framework/sources/aft-lambda-layer/aft_common/metrics.py --codebuild-name "aft-account-customizations" --codebuild-status $CODEBUILD_BUILD_SUCCEEDING
+            unset AWS_PROFILE
+          fi
+        fi
+      # Plan mode: write the plan manifest and prune the workspace before it is
+      # published as the pipeline artifact
+      - |
+        if [[ $TF_COMMAND == "plan" ]]; then
+          jq -n --arg account_id "$VENDED_ACCOUNT_ID" --arg customization "$CUSTOMIZATION" \
+            --arg tf_distribution "$TF_DISTRIBUTION" --arg plan_changes "$TF_PLAN_CHANGES" \
+            --arg plan_completed_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            --arg codebuild_build_id "$CODEBUILD_BUILD_ID" \
+            '{schema_version: "1", account_id: $account_id, customization: $customization, tf_distribution: $tf_distribution, plan_changes: $plan_changes, plan_completed_at: $plan_completed_at, codebuild_build_id: $codebuild_build_id}' > "$DEFAULT_PATH/aft-plan-manifest.json"
+          rm -rf "$DEFAULT_PATH/aft-venv" "$DEFAULT_PATH/api-helpers-venv" "$DEFAULT_PATH/aws-aft-core-framework"
+          find "$DEFAULT_PATH" -type d -name ".terraform" -prune -exec rm -rf {} +
         fi
       - |
         if [[ $CODEBUILD_BUILD_SUCCEEDING == 0 ]]; then
           exit 1
         fi
       - |
-        if [[ ! -z "$CUSTOMIZATION" ]]; then 
-          source $DEFAULT_PATH/api-helpers-venv/bin/activate
-          export AWS_PROFILE=aft-target
-          . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/post-api-helpers.sh || exit 1
+        if [[ $TF_COMMAND != "plan" ]]; then
+          if [[ ! -z "$CUSTOMIZATION" ]]; then
+            source $DEFAULT_PATH/api-helpers-venv/bin/activate
+            export AWS_PROFILE=aft-target
+            . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/post-api-helpers.sh || exit 1
+          fi
         fi
+
+artifacts:
+  name: account-customizations-plan
+  files: ['**/*']
+  base-directory: '.'
+  exclude-paths: ['aft-venv/**/*', 'api-helpers-venv/**/*', 'aws-aft-core-framework/**/*', '**/.terraform/**/*']

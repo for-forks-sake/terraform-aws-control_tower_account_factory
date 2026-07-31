@@ -283,3 +283,7 @@ output "aft_sns_topic_arn" {
 output "aft_failure_sns_topic_arn" {
   value = module.aft_account_request_framework.aft_failure_sns_topic_arn
 }
+
+output "aft_approvals_sns_topic_arn" {
+  value = module.aft_customizations.aft_customizations_approval_sns_topic_arn
+}
