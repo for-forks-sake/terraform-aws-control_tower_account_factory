@@ -20,6 +20,7 @@ resource "aws_iam_role_policy" "aft_codepipeline_customizations_policy" {
     data_aws_region_current_name                             = data.aws_region.current.region
     data_aws_caller_identity_current_account_id              = data.aws_caller_identity.current.account_id
     data_aws_kms_alias_aft_key_target_key_arn                = var.aft_kms_key_arn
+    aft_customizations_approval_sns_topic_arn                = aws_sns_topic.aft_customizations_approval.arn
   })
 }
 ###################################################################

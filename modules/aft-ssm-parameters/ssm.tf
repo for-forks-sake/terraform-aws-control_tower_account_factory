@@ -430,3 +430,15 @@ resource "aws_ssm_parameter" "aft_metrics_reporting_uuid" {
   value = random_uuid.metrics_reporting_uuid.result
   type  = "String"
 }
+
+resource "aws_ssm_parameter" "aft_customizations_approval_sns_topic_arn" {
+  name  = "/aft/config/aft-pipeline/approval-sns-topic-arn"
+  type  = "String"
+  value = var.aft_customizations_approval_sns_topic_arn
+}
+
+resource "aws_ssm_parameter" "aft_customizations_approval_timeout_in_minutes" {
+  name  = "/aft/config/aft-pipeline/approval-timeout-in-minutes"
+  type  = "String"
+  value = var.aft_customizations_approval_timeout_in_minutes
+}

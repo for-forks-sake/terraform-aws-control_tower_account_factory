@@ -555,3 +555,13 @@ variable "aft_metrics_reporting" {
     error_message = "Valid values for var: aft_metrics_reporting are (true, false)."
   }
 }
+
+variable "aft_customizations_approval_timeout_in_minutes" {
+  description = "Minutes before a pending customizations approval expires and the pipeline execution fails without applying anything"
+  type        = number
+  default     = 5
+  validation {
+    condition     = var.aft_customizations_approval_timeout_in_minutes >= 5 && var.aft_customizations_approval_timeout_in_minutes <= 86400
+    error_message = "Valid values for var: aft_customizations_approval_timeout_in_minutes are between 5 and 86400 (CodePipeline approval action limits)."
+  }
+}

@@ -307,4 +307,6 @@ module "aft_ssm_parameters" {
   gitlab_selfmanaged_url                                      = var.gitlab_selfmanaged_url
   aft_codepipeline_customizations_bucket_id                   = module.aft_customizations.aft_codepipeline_customizations_bucket_name
   aft_metrics_reporting                                       = var.aft_metrics_reporting
+  aft_customizations_approval_sns_topic_arn                   = module.aft_customizations.aft_customizations_approval_sns_topic_arn
+  aft_customizations_approval_timeout_in_minutes              = var.aft_customizations_approval_timeout_in_minutes
 }
