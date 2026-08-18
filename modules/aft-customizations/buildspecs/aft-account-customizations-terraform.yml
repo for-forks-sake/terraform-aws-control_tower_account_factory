@@ -130,13 +130,11 @@ phases:
     on-failure: ABORT
     commands:
       - |
-        if [[ $TF_COMMAND != "apply" ]]; then
-          if [[ ! -z "$CUSTOMIZATION" ]]; then
-            source $DEFAULT_PATH/api-helpers-venv/bin/activate
-            export AWS_PROFILE=aft-target
-            . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/pre-api-helpers.sh || exit 1
-            unset AWS_PROFILE
-          fi
+        if [[ ! -z "$CUSTOMIZATION" ]]; then
+          source $DEFAULT_PATH/api-helpers-venv/bin/activate
+          export AWS_PROFILE=aft-target
+          . $DEFAULT_PATH/$CUSTOMIZATION/api_helpers/pre-api-helpers.sh || exit 1
+          unset AWS_PROFILE
         fi
 
   build:
@@ -276,7 +274,7 @@ phases:
           exit 1
         fi
       - |
-        if [[ $TF_COMMAND != "plan" ]]; then
+        if [[ $TF_COMMAND == "apply" ]]; then
           if [[ ! -z "$CUSTOMIZATION" ]]; then
             source $DEFAULT_PATH/api-helpers-venv/bin/activate
             export AWS_PROFILE=aft-target
