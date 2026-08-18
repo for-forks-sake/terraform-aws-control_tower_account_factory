@@ -1,3 +1,9 @@
+## v1.21.1-internal-0.1.1
+
+### Fixed
+
+- PET-5010: Fixed execution logic of pre|post-api-helpers.sh
+
 ## v1.21.1-internal-0.1.0
 
 ### Added
